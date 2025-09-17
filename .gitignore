@@ -1,0 +1,5 @@
+*.pickle
+*.pt
+error_logs/
+runs/
+results/*

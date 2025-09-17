@@ -1,0 +1,78 @@
+
+from concurrent.futures import ProcessPoolExecutor
+from itertools import repeat
+from pathlib import Path
+from PIL import Image, ImageFile
+import argparse, os, shutil, sys
+
+# Reject truncated files instead of silently loading them
+ImageFile.LOAD_TRUNCATED_IMAGES = False
+
+
+# ──────────────────────────  worker  ──────────────────────────
+def check_and_move_if_corrupt(src_path: Path, dest_dir: Path) -> tuple[str, bool, str]:
+    """
+    Opens and fully decodes the image (to catch truncation).
+    If decoding fails, move to dest_dir.
+    """
+    try:
+        print(f'loading {src_path}')
+        with Image.open(src_path) as im:
+            im.load()  # full decode; will raise OSError for truncated data
+        return src_path.name, True, ""
+    except Exception as e:
+        try:
+            shutil.move(src_path, dest_dir / src_path.name)
+        except Exception as move_err:
+            return src_path.name, False, f"move failed: {move_err}"
+        return src_path.name, False, str(e)
+
+
+# ─────────────────────────── main  ────────────────────────────
+def main(source, dest, n_workers, chunk_size):
+    src_dir  = Path(source)
+    dest_dir = Path(dest)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    files = [p for p in src_dir.iterdir() if p.is_file()]
+
+    ok = bad = move_fail = 0
+
+    with ProcessPoolExecutor(max_workers=n_workers) as pool:
+        # map supports multiple iterables → pass dest_dir via itertools.repeat
+        for name, is_ok, err in pool.map(
+            check_and_move_if_corrupt,
+            files,
+            repeat(dest_dir),
+            chunksize=chunk_size,
+        ):
+            if is_ok:
+                ok += 1
+            else:
+                bad += 1
+                if err.startswith("move failed"):
+                    move_fail += 1
+                print(f"✗ {name}  ({err})", file=sys.stderr)
+
+    print(
+        f"\n✓ kept {ok} good files   ✗ moved {bad} bad files   ⚠ move errors: {move_fail}"
+    )
+
+
+# ──────────────────────────  cli hook  ─────────────────────────
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Move corrupted images out of a directory in parallel."
+    )
+    parser.add_argument("--source", required=True, help="Directory to scan")
+    parser.add_argument("--dest",   required=True, help="Directory for bad files")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count())),
+        help="Parallel workers (default: $SLURM_CPUS_PER_TASK or all cores)",
+    )
+    parser.add_argument("--chunk", type=int, default=64, help="Chunk size per worker")
+    args = parser.parse_args()
+
+    main(args.source, args.dest, args.workers, args.chunk)

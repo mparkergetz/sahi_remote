@@ -1,0 +1,17 @@
+from sahi import AutoDetectionModel
+from sahi.predict import predict
+
+predict(
+    model_type="ultralytics",
+    model_path="bombusvaledit_11s_001.pt",
+    model_device="cuda",
+    model_confidence_threshold=0.4,
+    source="/scratch/getzm/test_subset",
+    slice_height=640,
+    slice_width=640,
+    overlap_height_ratio=0.2,
+    overlap_width_ratio=0.2,
+    export_pickle=True,
+    novisual=True,
+    name='07_22_24'
+)
